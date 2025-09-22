@@ -65,7 +65,7 @@ export default function BotAgentPage() {
     const { signature, sdkKey } = await sigResp.json()
 
     // Dynamically import SDK in client
-    const { ZoomMtg } = await import("zoom-meeting-sdk")
+    const { ZoomMtg } = await import("@zoom/meetingsdk")
     // Configure SDK static assets
     ZoomMtg.setZoomJSLib("https://source.zoom.us/2.17.0/lib", "/av")
     ZoomMtg.preLoadWasm()
