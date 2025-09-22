@@ -1,51 +1,86 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { onSnapshot, doc, updateDoc, getDoc } from "firebase/firestore"
+import { onSnapshot, doc, updateDoc, getDoc, collection, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useSearchParams } from "next/navigation"
 
 // Lightweight bot agent page: auto-joins Zoom via Meeting SDK when requested and relays audio to SSE
 export default function BotAgentPage() {
   const search = useSearchParams()
-  const meetingDocId = search.get("meetingId") // Firestore document id
+  const meetingDocId = search.get("meetingId") // Firestore document id (optional)
   const [status, setStatus] = useState("idle")
+  const [activeDocId, setActiveDocId] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
-    if (!meetingDocId) return
+    // If a specific meeting doc is provided, only watch that. Otherwise, watch all meetings requesting bot.
+    if (meetingDocId) {
+      const unsubscribe = onSnapshot(doc(db, "meetings", meetingDocId), async (snap) => {
+        const data = snap.data() as any
+        if (!data) return
 
-    // Watch the meeting document for botJoinRequested
-    const unsubscribe = onSnapshot(doc(db, "meetings", meetingDocId), async (snap) => {
-      const data = snap.data() as any
-      if (!data) return
-
-      if (data.botJoinRequested && status !== "streaming") {
-        setStatus("joining")
-        try {
-          // Join the Zoom meeting via Meeting SDK (attendee role) then start capture and streaming
-          await joinZoomMeeting(meetingDocId)
-          await startCaptureAndStream(meetingDocId)
-          await updateDoc(doc(db, "meetings", meetingDocId), { botJoined: true, status: "live" })
-          setStatus("streaming")
-        } catch (e) {
-          console.error("[BotAgent] Failed to start streaming", e)
-          setStatus("error")
+        if (data.botJoinRequested && status !== "streaming") {
+          if (activeDocId && activeDocId !== meetingDocId) {
+            // Stop any previous streaming session before switching
+            stopStreaming()
+          }
+          setActiveDocId(meetingDocId)
+          setStatus("joining")
+          try {
+            await joinZoomMeeting(meetingDocId)
+            await startCaptureAndStream(meetingDocId)
+            await updateDoc(doc(db, "meetings", meetingDocId), { botJoined: true, status: "live" })
+            setStatus("streaming")
+          } catch (e) {
+            console.error("[BotAgent] Failed to start streaming", e)
+            setStatus("error")
+          }
         }
-      }
 
-      if (!data.botJoinRequested && status === "streaming") {
+        if (!data.botJoinRequested && activeDocId === meetingDocId && status === "streaming") {
+          stopStreaming()
+          setActiveDocId(null)
+          setStatus("idle")
+        }
+      })
+
+      return () => {
+        unsubscribe()
         stopStreaming()
-        setStatus("idle")
       }
-    })
+    }
+
+    // Global watcher for any meeting requesting bot join
+    const unsubscribeAll = onSnapshot(
+      query(collection(db, "meetings"), where("botJoinRequested", "==", true)),
+      async (snap) => {
+        // Pick the first meeting requesting join if not already streaming
+        if (status !== "streaming") {
+          const first = snap.docs[0]
+          if (!first) return
+          const docId = first.id
+          setActiveDocId(docId)
+          setStatus("joining")
+          try {
+            await joinZoomMeeting(docId)
+            await startCaptureAndStream(docId)
+            await updateDoc(doc(db, "meetings", docId), { botJoined: true, status: "live" })
+            setStatus("streaming")
+          } catch (e) {
+            console.error("[BotAgent] Failed to start streaming", e)
+            setStatus("error")
+          }
+        }
+      },
+    )
 
     return () => {
-      unsubscribe()
+      unsubscribeAll()
       stopStreaming()
     }
-  }, [meetingDocId, status])
+  }, [meetingDocId, status, activeDocId])
 
   const joinZoomMeeting = async (docId: string) => {
     const d = await getDoc(doc(db, "meetings", docId))
