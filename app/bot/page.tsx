@@ -101,18 +101,31 @@ export default function BotAgentPage() {
 
     // Dynamically import SDK in client
     const { ZoomMtg } = await import("@zoom/meetingsdk")
+    // Inject Zoom CSS if not present
+    ensureZoomCss()
     // Configure SDK static assets
     ZoomMtg.setZoomJSLib("https://source.zoom.us/2.17.0/lib", "/av")
     ZoomMtg.preLoadWasm()
     ZoomMtg.prepareJssdk()
+    try {
+      // Optional: load i18n
+      // @ts-ignore
+      ZoomMtg.i18n?.load?.("en-US")
+      // @ts-ignore
+      ZoomMtg.i18n?.reload?.("en-US")
+    } catch {}
 
     await new Promise<void>((resolve, reject) => {
       ZoomMtg.init({
         leaveUrl: window.location.origin + "/bot?meetingId=" + docId,
         disableInvite: true,
         disableCallOut: true,
+        isSupportAV: true,
         success: () => resolve(),
-        error: (err: any) => reject(err),
+        error: (err: any) => {
+          console.error("[BotAgent] ZoomMtg.init error", err)
+          reject(err)
+        },
       })
     })
 
@@ -123,8 +136,14 @@ export default function BotAgentPage() {
         signature,
         sdkKey,
         passWord: password,
-        success: () => resolve(),
-        error: (err: any) => reject(err),
+        success: () => {
+          console.log("[BotAgent] Joined Zoom meeting as bot")
+          resolve()
+        },
+        error: (err: any) => {
+          console.error("[BotAgent] ZoomMtg.join error", err)
+          reject(err)
+        },
       })
     })
   }
@@ -142,7 +161,7 @@ export default function BotAgentPage() {
     mediaRecorderRef.current.ondataavailable = async (event) => {
       if (event.data.size > 0) {
         const arrayBuffer = await event.data.arrayBuffer()
-        const base64Audio = Buffer.from(arrayBuffer).toString("base64")
+        const base64Audio = arrayBufferToBase64(arrayBuffer)
         try {
           await fetch("/api/stream/audio", {
             method: "POST",
@@ -156,6 +175,28 @@ export default function BotAgentPage() {
     }
 
     mediaRecorderRef.current.start(100)
+  }
+
+  const ensureZoomCss = () => {
+    const id = "zoom-sdk-bootstrap-css"
+    if (!document.getElementById(id)) {
+      const link = document.createElement("link")
+      link.id = id
+      link.rel = "stylesheet"
+      link.href = "https://source.zoom.us/2.17.0/css/bootstrap.css"
+      document.head.appendChild(link)
+    }
+  }
+
+  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+    let binary = ""
+    const bytes = new Uint8Array(buffer)
+    const chunkSize = 0x8000
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize)
+      binary += String.fromCharCode.apply(null, Array.from(chunk) as unknown as number[])
+    }
+    return btoa(binary)
   }
 
   const stopStreaming = () => {
