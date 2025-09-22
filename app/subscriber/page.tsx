@@ -9,13 +9,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Headphones, Clock, Calendar } from "lucide-react"
 import { collection, query, where, getDocs, orderBy } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import type { ZoomMeeting, Subscriber } from "@/lib/types"
+import type { ZoomMeeting, User } from "@/lib/types"
 import { MeetingCard } from "@/components/meeting-card"
 import { useToast } from "@/hooks/use-toast"
 import { Navigation } from "@/components/navigation"
 
 export default function SubscriberPortal() {
-  const [subscriber, setSubscriber] = useState<Subscriber | null>(null)
+  const [subscriber, setSubscriber] = useState<User | null>(null)
   const [meetings, setMeetings] = useState<ZoomMeeting[]>([])
   const [activeMeetings, setActiveMeetings] = useState<ZoomMeeting[]>([])
   const [loading, setLoading] = useState(false)
@@ -24,13 +24,15 @@ export default function SubscriberPortal() {
   const { toast } = useToast()
 
   useEffect(() => {
-    // Check if subscriber is already authenticated (localStorage)
-    const savedSubscriber = localStorage.getItem("subscriber")
-    if (savedSubscriber) {
-      const parsedSubscriber = JSON.parse(savedSubscriber)
-      setSubscriber(parsedSubscriber)
-      setIsAuthenticated(true)
-      loadSubscriberMeetings(parsedSubscriber.id)
+    // Use general user auth, but ensure role is subscriber
+    const savedUser = localStorage.getItem("currentUser")
+    if (savedUser) {
+      const parsedUser = JSON.parse(savedUser) as User
+      if (parsedUser.role === "subscriber") {
+        setSubscriber(parsedUser)
+        setIsAuthenticated(true)
+        loadSubscriberMeetings(parsedUser.id)
+      }
     }
   }, [])
 
@@ -46,12 +48,8 @@ export default function SubscriberPortal() {
 
     setLoading(true)
     try {
-      // Find subscriber by email
-      const q = query(
-        collection(db, "subscribers"),
-        where("email", "==", subscriberEmail),
-        where("isActive", "==", true),
-      )
+      // Find user by email in users with subscriber role
+      const q = query(collection(db, "users"), where("email", "==", subscriberEmail), where("role", "==", "subscriber"), where("isActive", "==", true))
 
       const querySnapshot = await getDocs(q)
 
@@ -69,11 +67,11 @@ export default function SubscriberPortal() {
         id: subscriberDoc.id,
         ...subscriberDoc.data(),
         createdAt: subscriberDoc.data().createdAt.toDate(),
-      } as Subscriber
+      } as User
 
       setSubscriber(subscriberData)
       setIsAuthenticated(true)
-      localStorage.setItem("subscriber", JSON.stringify(subscriberData))
+      localStorage.setItem("currentUser", JSON.stringify(subscriberData))
 
       await loadSubscriberMeetings(subscriberData.id)
 
