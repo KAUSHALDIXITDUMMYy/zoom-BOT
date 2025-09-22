@@ -52,8 +52,8 @@ export function MeetingCard({ meeting, onStatusUpdate, showSubscriberView = fals
 
   const handleStreamToggle = async () => {
     try {
-      const subscriberId = localStorage.getItem("subscriber")
-        ? JSON.parse(localStorage.getItem("subscriber")!).id
+      const subscriberId = localStorage.getItem("currentUser")
+        ? JSON.parse(localStorage.getItem("currentUser")!).id
         : null
 
       if (!subscriberId) return

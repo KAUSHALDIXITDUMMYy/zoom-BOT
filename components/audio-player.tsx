@@ -51,7 +51,7 @@ export function AudioPlayer({ meetingId, meetingTopic, isLive = true, onStreamEn
       setIsLoading(true)
       setIsConnected(false)
 
-      const subscriberData = localStorage.getItem("subscriber")
+      const subscriberData = localStorage.getItem("currentUser")
       if (!subscriberData) {
         throw new Error("Subscriber not authenticated")
       }
