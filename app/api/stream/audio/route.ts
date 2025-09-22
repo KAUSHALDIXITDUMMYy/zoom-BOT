@@ -7,17 +7,25 @@ export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest) {
   try {
-    const { meetingId, audioData } = await request.json()
+    const { meetingId, audioData, format, sampleRate, channels } = await request.json()
 
     if (!meetingId || !audioData) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    // Convert base64 audio data back to ArrayBuffer
-    const audioBuffer = Buffer.from(audioData, "base64")
-
-    // Broadcast to all connected subscribers
-    broadcastAudioData(meetingId, audioBuffer)
+    if (format === "pcm_f32") {
+      // Pass through with metadata for clients to reconstruct
+      broadcastAudioData(meetingId, {
+        format: "pcm_f32",
+        data: audioData,
+        sampleRate: typeof sampleRate === "number" ? sampleRate : 44100,
+        channels: typeof channels === "number" ? channels : 1,
+      })
+    } else {
+      // Default/back-compat: treat as webm/opus chunk
+      const audioBuffer = Buffer.from(audioData, "base64")
+      broadcastAudioData(meetingId, audioBuffer)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

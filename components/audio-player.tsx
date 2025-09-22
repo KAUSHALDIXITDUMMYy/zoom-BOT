@@ -78,19 +78,43 @@ export function AudioPlayer({ meetingId, meetingTopic, isLive = true, onStreamEn
           const data = JSON.parse(event.data)
 
           if (data.type === "audio" && data.data) {
-            const audioData = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0))
-            const audioBuffer = await audioContextRef.current!.decodeAudioData(audioData.buffer.slice())
+            if (data.format === "pcm_f32") {
+              const buffer = base64ToArrayBuffer(data.data)
+              const floatData = new Float32Array(buffer)
+              const channels = data.channels || 1
+              const sampleRate = data.sampleRate || 44100
+              const frameLength = Math.floor(floatData.length / channels)
 
-            // Add to queue and play
-            audioQueueRef.current.push(audioBuffer)
-            if (!isPlayingAudioRef.current) {
-              playNextAudio()
+              const audioBuffer = audioContextRef.current!.createBuffer(channels, frameLength, sampleRate)
+              for (let ch = 0; ch < channels; ch++) {
+                const channelData = audioBuffer.getChannelData(ch)
+                for (let i = 0; i < frameLength; i++) {
+                  channelData[i] = floatData[i * channels + ch]
+                }
+              }
+
+              audioQueueRef.current.push(audioBuffer)
+              if (!isPlayingAudioRef.current) {
+                playNextAudio()
+              }
+
+              setBitrate(Math.round((floatData.length * 32) / 100))
+              setLatency(Date.now() - (data.timestamp || Date.now()))
+              setQuality("excellent")
+            } else {
+              // Back-compat: assume webm/opus blob chunk
+              const audioData = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0))
+              const audioBuffer = await audioContextRef.current!.decodeAudioData(audioData.buffer.slice())
+
+              audioQueueRef.current.push(audioBuffer)
+              if (!isPlayingAudioRef.current) {
+                playNextAudio()
+              }
+
+              setBitrate(Math.round((audioData.length * 8) / 100))
+              setLatency(Date.now() - (data.timestamp || Date.now()))
+              setQuality("excellent")
             }
-
-            // Update metrics
-            setBitrate(Math.round((audioData.length * 8) / 100)) // Approximate bitrate
-            setLatency(Date.now() - data.timestamp)
-            setQuality("excellent")
           } else if (data.type === "status") {
             if (!data.botJoined) {
               setQuality("poor")
@@ -121,6 +145,16 @@ export function AudioPlayer({ meetingId, meetingTopic, isLive = true, onStreamEn
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
+    const binary = atob(base64)
+    const len = binary.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes.buffer
   }
 
   const playNextAudio = () => {

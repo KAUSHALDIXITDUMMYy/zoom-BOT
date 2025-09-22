@@ -149,32 +149,68 @@ export default function BotAgentPage() {
   }
 
   const startCaptureAndStream = async (docId: string) => {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 1, width: 1, height: 1 },
-      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100, channelCount: 2 },
-    } as any)
+    // Try to capture audio directly from Zoom audio element to avoid manual system audio sharing
+    let stream: MediaStream | null = await tryCaptureZoomAudio()
+    if (!stream) {
+      // Fallback: system audio share (user prompt). Keep video tiny and ignored.
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 1, width: 1, height: 1 },
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100, channelCount: 1 },
+      } as any)
+    }
 
     mediaStreamRef.current = stream
     const audioOnly = new MediaStream(stream.getAudioTracks())
-    mediaRecorderRef.current = new MediaRecorder(audioOnly, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 })
 
-    mediaRecorderRef.current.ondataavailable = async (event) => {
-      if (event.data.size > 0) {
-        const arrayBuffer = await event.data.arrayBuffer()
-        const base64Audio = arrayBufferToBase64(arrayBuffer)
-        try {
-          await fetch("/api/stream/audio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ meetingId: docId, audioData: base64Audio }),
-          })
-        } catch (err) {
-          console.error("[BotAgent] stream error", err)
+    // PCM float32 capture via Web Audio API for reliable decode on subscribers
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 })
+    const source = audioContext.createMediaStreamSource(audioOnly)
+    const processor = audioContext.createScriptProcessor(4096, source.channelCount, 1)
+    source.connect(processor)
+    processor.connect(audioContext.destination)
+
+    processor.onaudioprocess = async (e) => {
+      try {
+        const input = e.inputBuffer
+        const numChannels = Math.min(input.numberOfChannels, 1)
+        const samples = input.length
+        const interleaved = new Float32Array(samples * numChannels)
+        for (let ch = 0; ch < numChannels; ch++) {
+          const channel = input.getChannelData(ch)
+          for (let i = 0; i < samples; i++) {
+            interleaved[i * numChannels + ch] = channel[i]
+          }
         }
+
+        const base64 = arrayBufferToBase64(interleaved.buffer)
+        await fetch("/api/stream/audio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ meetingId: docId, audioData: base64, format: "pcm_f32", sampleRate: input.sampleRate, channels: numChannels }),
+        })
+      } catch (err) {
+        console.error("[BotAgent] PCM send error", err)
       }
     }
+  }
 
-    mediaRecorderRef.current.start(100)
+  const tryCaptureZoomAudio = async (): Promise<MediaStream | null> => {
+    // Wait briefly for Zoom DOM to render
+    await new Promise((r) => setTimeout(r, 1000))
+    const audios = Array.from(document.querySelectorAll("audio")) as HTMLAudioElement[]
+    for (const a of audios) {
+      try {
+        // Ensure the element is playing
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        a.play?.()
+        // Some browsers expose captureStream on media elements
+        const cap = (a as any).captureStream?.() as MediaStream | undefined
+        if (cap && cap.getAudioTracks().length > 0) {
+          return new MediaStream(cap.getAudioTracks())
+        }
+      } catch {}
+    }
+    return null
   }
 
   const ensureZoomCss = () => {

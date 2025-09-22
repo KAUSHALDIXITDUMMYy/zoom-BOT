@@ -104,16 +104,25 @@ export async function GET(request: NextRequest) {
 }
 
 // Function to broadcast audio data to all subscribers of a meeting
-export function broadcastAudioData(meetingId: string, audioData: ArrayBuffer) {
+export function broadcastAudioData(
+  meetingId: string,
+  payload:
+    | { format: "webm_opus" | "pcm_f32"; data: string; sampleRate?: number; channels?: number; timestamp?: number }
+    | ArrayBuffer,
+) {
   const connections = activeConnections.get(meetingId)
   if (!connections || connections.size === 0) return
 
-  const base64Audio = Buffer.from(audioData).toString("base64")
-  const data = JSON.stringify({
-    type: "audio",
-    data: base64Audio,
-    timestamp: Date.now(),
-  })
+  let message: any
+  if (payload instanceof ArrayBuffer) {
+    // Backward compatibility: raw buffer assumed to be webm/opus chunk
+    const base64Audio = Buffer.from(payload).toString("base64")
+    message = { type: "audio", format: "webm_opus", data: base64Audio, timestamp: Date.now() }
+  } else {
+    message = { type: "audio", timestamp: Date.now(), ...payload }
+  }
+
+  const data = JSON.stringify(message)
 
   connections.forEach((controller) => {
     try {
