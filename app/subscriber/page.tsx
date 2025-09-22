@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Headphones, Clock, Calendar } from "lucide-react"
-import { collection, query, where, getDocs, orderBy } from "firebase/firestore"
+import { collection, query, where, getDocs, orderBy, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import type { ZoomMeeting, User } from "@/lib/types"
 import { MeetingCard } from "@/components/meeting-card"
@@ -99,23 +99,34 @@ export default function SubscriberPortal() {
         orderBy("startTime", "desc"),
       )
 
-      const querySnapshot = await getDocs(q)
-      const meetingsList: ZoomMeeting[] = []
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data()
-        meetingsList.push({
-          id: doc.id,
-          ...data,
-          startTime: data.startTime.toDate(),
-          createdAt: data.createdAt.toDate(),
-        } as ZoomMeeting)
-      })
-
-      setMeetings(meetingsList)
-      setActiveMeetings(meetingsList.filter((m) => m.status === "live"))
+      // Real-time listener
+      return onSnapshot(
+        q,
+        (querySnapshot) => {
+          const meetingsList: ZoomMeeting[] = []
+          querySnapshot.forEach((snapshotDoc) => {
+            const data = snapshotDoc.data() as any
+            meetingsList.push({
+              id: snapshotDoc.id,
+              ...data,
+              startTime: data.startTime?.toDate ? data.startTime.toDate() : new Date(data.startTime),
+              createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+            } as ZoomMeeting)
+          })
+          setMeetings(meetingsList)
+          setActiveMeetings(meetingsList.filter((m) => m.status === "live"))
+        },
+        (error) => {
+          console.error("Error listening to meetings:", error)
+          toast({
+            title: "Error",
+            description: "Failed to subscribe to meetings",
+            variant: "destructive",
+          })
+        },
+      )
     } catch (error) {
-      console.error("Error loading meetings:", error)
+      console.error("Error setting up meetings listener:", error)
       toast({
         title: "Error",
         description: "Failed to load meetings",
@@ -129,7 +140,7 @@ export default function SubscriberPortal() {
     setIsAuthenticated(false)
     setMeetings([])
     setActiveMeetings([])
-    localStorage.removeItem("subscriber")
+    localStorage.removeItem("currentUser")
   }
 
   if (!isAuthenticated) {
